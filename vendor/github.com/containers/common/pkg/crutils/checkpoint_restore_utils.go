@@ -12,6 +12,7 @@ import (
 	metadata "github.com/checkpoint-restore/checkpointctl/lib"
 	"github.com/checkpoint-restore/go-criu/v7/stats"
 	"github.com/containers/storage/pkg/archive"
+	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/opencontainers/selinux/go-selinux/label"
 )
 
@@ -87,7 +88,15 @@ func CRRemoveDeletedFiles(id, baseDirectory, containerRootDirectory string) erro
 	for _, deleteFile := range deletedFiles {
 		// Using RemoveAll as deletedFiles, which is generated from 'podman diff'
 		// lists completely deleted directories as a single entry: 'D /root'.
-		if err := os.RemoveAll(filepath.Join(containerRootDirectory, deleteFile)); err != nil {
+		// Use SecureJoin to prevent path traversal: deleteFile originates
+		// from an attacker-controlled checkpoint archive and must not be
+		// allowed to escape containerRootDirectory via "../" components.
+		securePath, err := securejoin.SecureJoin(containerRootDirectory, deleteFile)
+		if err != nil {
+			return fmt.Errorf("failed to securely resolve path for container %s during restore: %w", id, err)
+		}
+
+		if err := os.RemoveAll(securePath); err != nil {
 			return fmt.Errorf("failed to delete files from container %s during restore: %w", id, err)
 		}
 	}
